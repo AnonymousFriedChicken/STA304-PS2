@@ -1,0 +1,321 @@
+---
+title: "The Relationship between the Number of Years since an Individual's First Marriage and the Individual's Self-assessed Mental Wellbeing"
+author: "Anonymous Fried Chicken"
+date: "10/19/2020"
+output:
+  pdf_document: default
+  html_document: default
+abstract: In this report, we investigate the relationship between the number of years since an individual's first marriage and the individual's self-assessed mental wellbeing.
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(opendatatoronto)
+library(tidyverse)
+library(ggfortify)
+```
+
+# 1. Introduction
+
+In this report, we attempt to analyze the relationship between the number of years since an individual's first marriage and their self-rated mental wellbeing. While marriage is a life-altering decision which is largely a social norm in the present age, the prospect of marriage is sometimes assessed from a temporary and idealistic lens. An empirical analysis of this relationship can allow individuals to objectively calibrate their expectations for marriage.
+
+Prior research into this topic exists. Lucas et. al concluded that this is the outcome on average from a 15-year longitudial study over 24,000 individuals.[7] VanLamingham et. al conclude that there is no support for an upturn in  marital happiness in later years.[8] We use the Canadian General Social Survey (GSS) data on Families from 2017 and extract relevant data to test the hypothesis that marriage significantly improves mental wellbeing during marriage.[1] We split the set of individuals who have previously married into 3 cohorts: individuals who first married 5 or less years ago, individuals who first married 10 or less years ago, and all surveyed individuals. We then perform linear regression and relevant diagnostics in order to assess whether there is a statistically significant relationship between self-rated mental wellbeing and years since marriage. We find that self-rated mental wellbeing significantly improves within the first 5 years of becoming married, but such a relationship is not found within the other cohorts.
+
+Future steps can be taken for this research. Firstly, the GSS for families is not comprehensive in that the surveyed population weights heavily towards older individuals. Thus, because the cohorts are overlapping (in order to also validate prior academic research), the regression for the cohorts which have been married for longer may underweigh the young population. Furthermore, more precise cohorts can be constructed, such as a cohort which has never been divorced, but the GSS dataset does not provide enough samples in which the responder's current marriage is their only marriage. The overall survey responses available for self-assessed mental health also largely consist of more positive options without a cstated benchmark for what one would consider a "standard" state of mental health, so responders with poor mental health may also be underrepresented.
+
+# 2. Data
+
+We use the Canadian General Social Survey (GSS) for Families from 2017.[1] The GSS - Family dataset is chosen because it is an authoritative survey of Canadian family information by Canada's national statistics office.[2] The 2017 GSS is also the most recent dataset because the GSS survey frequency is 5 years.[1] Furthermore, because a copy of the survey questions is openly available on Statistics Canada's offical website, we are also able to understand the results in the context of the survey process.[3]
+
+The dataset is initially in a fairly unclean format, but we utilize code provided by Rohan Alexander and Sam Caetano to clean the data into a workable format.[4]
+
+```{r data}
+# , include=FALSE
+data <- read_csv("gss.csv")
+spec(data)
+```
+
+In total, the survey contains results from 20602 survey respondants across Canada, with each respondant providing answers to 81 questions. We will choose responses for several specific questions of interest from the survey, briefly analyze them, and transform their format if necessary before proceeding to modelling.
+
+Because the goal of this report is to assess the impact of various factors on mental health, the state of the respondant's wellbeing will be treated as the response variable in later sections.
+
+The survey questions are also quoted below for many of the responses that we inspect. In these questions, the RF response indicates that the respondent to answer, and the DK response indicates that the respondant doesn't know the answer to this question.
+
+### 2.1. Mental Wellbeing Data
+
+The exact text for the corresponding GSS question is quoted below.[3]
+
+```
+In general, would you say your mental health is...?
+
+1: Excellent
+2: Very good
+3: Good
+4: Fair
+5: Poor
+8: RF
+9: DK
+```
+
+Particular attention is paid to the mental wellbeing response because it is the response variable for later modelling.
+
+Let us then observe the distribution of responses.
+
+```{r mental_wellbeing_hist2}
+# Create a barplot (functionally equivalent to a histogram) in this context for qualitative mental health responses
+barplot(table(data$self_rated_mental_health), space = 3, xlab="Qualitative Mental health Responses", main="Histogram of Qualitative Meantal Health Responses", col="grey")
+```
+
+With the previous mandatory step out of the way, it is worth recognizing that the quoted survey question itself may introduce sampling bias. Three answers are associated with positive mental wellbeing - "Good", "Very good", "Excellent", one answer is associated with normal mental wellbeing - "Fair", and "Poor" is associate with negative mental wellbeing. While some may consider "Good" to be a normal state of wellbeing instead of fair, there is likely to be some degree of subjective interpretation by responders on what the benchmark response for a normal state of mental wellbeing is. As the survey itself does not provide an objective benchmark for "standard" mental health, these qualitative responses may be biased towards positivity due to the nature of the qualitative response options.
+
+However, because there is still a clear sliding scale from worse mental health to better mental health, we can convert these responses to an ordinal numeric format consisting of the integers between 0 to 4, where "Poor" is considered 0 and "Excellent" is considered 4. Because we wish to perform modelling with mental wellbeing later on and the qualitative responses are not fully descriptive, this transformation also provides utility for the analysis.
+
+```{r mental_wellbeing_xform}
+# Create a new column for the discussed numerical mental health values
+data[,"self_rated_mental_health_num"] <- NA
+
+# Populate the new column based on the responses of the correspoding qualitative responses
+data$self_rated_mental_health_num[data$self_rated_mental_health == "Poor"] <- 0
+data$self_rated_mental_health_num[data$self_rated_mental_health == "Fair"] <- 1
+data$self_rated_mental_health_num[data$self_rated_mental_health == "Good"] <- 2
+data$self_rated_mental_health_num[data$self_rated_mental_health == "Very good"] <- 3
+data$self_rated_mental_health_num[data$self_rated_mental_health == "Excellent"] <- 4
+```
+
+Let us then observe the distribution of responses after this transformation.
+
+```{r mental_wellbeing_hist}
+hist(data$self_rated_mental_health_num, xlab="Numeric Mental health Responses", main="Histogram of Numeric Meantal Health Responses", col="grey")
+```
+
+The distribution of the remaining responses is identical to what we previously saw, but just with the "Don't know" responses removed.
+
+As supported by our hypothesis, it appears that the overwhelming majority of respondents say that they have positive mental health, with "Very good" mental wellbeing holding a plurality among the responses.
+
+Secondly, as we treat mental wellbeing as the response variable, we have no need in this context for rows in which the respondant refuses to respond or doesn't know the response. Thus, such rows are pruned.
+
+```{r mental_wellbeing_prune}
+dim(data)
+# Remove rows in which self_rated_mental_health is NA or "Don't know"
+data <- data[!is.na(data$self_rated_mental_health) & data$self_rated_mental_health != "Don't know",]
+dim(data)
+```
+
+In total, it appears that 162 rows out of 20602 were removed as part of this pruning process. This is less than 1% of the total data and is unlikely to massively impact the overall distribution of the data insofar as other responses are concerned.
+
+
+### 2.2. Current Age Data
+
+The specific survey question for this subsection is not included as it's a fairly straightforward question requesting the integer age of the respondant.
+
+```{r age}
+# Create a histogram of respondant ages
+hist(data$age, xlab="Age", main="Histogram of Respondant Ages", col="grey")
+```
+
+Younger respondants are less common than older respondants. It is worth noting that the minimum age for a respondant is 15.[3] One aspect that is of interest to us is the numerical mental wellness of individuals belonging to each age group, for both individuals who have been divorced and individuals who haven't been divorced.
+
+
+### 2.3. Age at First Marriage Data
+
+The exact text for the corresponding GSS question is quoted below.[3]
+```
+(In what month and year was your first marriage?)
+
+Min = 1900; Max = 2017
+```
+
+```{r age_at_first_marriage}
+# Exclude NA values from the age_at_first_marriage column (that is, exclude people who have not married yet)
+fm_age <- data$age_at_first_marriage %>% na.exclude
+
+# Create a histogram of respondant ages at first marriage
+hist(fm_age, xlab="Age at First Marriage", main="Histogram of Respondant Ages at First Marriage", col="grey")
+```
+
+We see that among the respondants who have married, the majority of respondants first marry at an early age prior to 25. There appear to be a very small number of respondants who married at a very young age (15, for example), but it's worth considering that some responders may have married in other countries which have different cultural and legal marriage requirements, prior to moving to Canada.
+
+```{r age_at_first_marriage_2}
+mean(fm_age)
+median(fm_age)
+```
+An interesting observation is that the mean age of first marriage found among respondants for this survey is 24.1 years of age and the median age of first marriage found is 22.8. This is substantially below the mean age of first marriage (30.3 across both men and women) measured and released by Statistics Canada in 2008.[5] This indicates that the age of marriage has either dropped by 6.2 years in the 9 years from 2008 to 2017, or that Statistics Canada used a more controlled sample to measure official age of first marriage across all of Canada in 2008. The second case seems more likely, since we've already seen that the average age of respondants in this survey are older and the average age of marriage was much lower between the 1950s to the late 1970s.[6] It is thus likely that this earlier age of marriage is a consequence of younger respondants being less represented within the surveys.
+
+We proceed while taking note of the above age-related information.
+
+
+### 2.4. Years since First Marriage
+
+The data inspected in sections 2.3 (age of first marriage) can be subtracted from the data inspected in section 2.2 (current age) in order to form a new column indicating the years since age of marriage for each responder. We proceed to first remove rows which include invalid responses for current age or age of first marriage, and then create this new column.
+
+```{r age_since_first_marriage}
+# Remove rows in which either age_at_first_marriage or age is NA
+data <- data[!is.na(data$age_at_first_marriage) & !is.na(data$age),]
+dim(data)
+```
+
+In total, roughly 3/4 of the survey responses were pruned as they contained no response for either the age of first marriage (indicating that the responder did not marry or refused to answer) or age. However, a sample size of 5314 is still reasonably representative.
+
+```{r age_since_first_marriage_2}
+# Create a new column for the age at first marriage
+data$years_since_first_marriage <- (data$age - data$age_at_first_marriage)
+
+hist(data$years_since_first_marriage, xlab="Years since First Marriage", main="Histogram of Respondant Ages at First Marriage", col="grey")
+```
+
+Overall, we see that the age of the respondants leans heavily towards the older side.
+
+
+### 2.5. Splitting the data into 3 Cohorts
+
+Current academic research indicates that marriage can positively influence short-term happiness but does not have a great impact in the long term. Lucas et. al concluded that this is the outcome on average from a 15-year longitudial study over 24,000 individuals.[7] VanLamingham et. al conclude that there is no support for an upturn in  marital happiness in later years.[8]
+
+After the wrangling and cleaning that we've performed above, we ultimately find that the majority of respondants have spent more than 3 decades since their initial marriage. We thus believe that it would be beneficial to introduce multiple cohorts for the modelling section of this report. One cohort which would be quite ideal would be a cohort in which the married couple has not undergone divorce, but the size of this cohort would be extremely small as very few respondants have answered the GSS question pertaining to whether their current marriage is their only one.
+
+This, we create 3 cohorts: (1) a cohort consisting indiviauls who have married 5 or less years ago, (2) a cohort consistent of individuals who have married 10 or less years ago, and (3) a cohort consisting of all respondants. This means that the cohorts are not mutually exclusive, as (1) is a subset of (2) and (2) is a subset of (3). However, we believe that this would be a better approach than a one-cohort approach as there is already existing research for us to refer to and validate.
+
+```{r age_since_first_marriage_non_divorced}
+# Create new dataset for cohort 1 with only rows for which years of marriage <= 5
+data_lte5 <- data[data$years_since_first_marriage <= 5,]
+
+# Create new dataset for cohort 2 with only rows for which years of marriage <= 10
+data_lte10 <- data[data$years_since_first_marriage <= 10,]
+
+# The base dataset will serve as the dataset for cohort 3
+```
+
+
+
+# 3. Model
+
+For each cohort, we apply linear regression using least squares in order to find whether there is a statistically significant relationship between years since first marriage and personal mental wellbeing.
+
+The each regression analysis, the assumptions of linear regression (data linearity, normality of residuals, homogeneity of residual variance, and independence of residual error terms) are checked via visual plots.
+
+The below function is used to create plots that model assumptions, to perform linear regression using least squares over each dataset, and to plot the data alongside the regression line.
+
+```{r model_function}
+# Function used to check regression assumptions
+check_assumptions <- function(data, x_col, y_col) {
+  # Show the diagnostic plots within a 2x2 grid
+  par(mfrow = c(2, 2))
+  
+  # Create a regression model
+  reg <- lm(y_col ~ x_col, data=data)
+  
+  # Autoplot the regression line
+  plot(reg)
+}
+
+# Function to plot data and draws a regression line based on least squares
+plot_data <- function(data, x_col, y_col, xlabel, ylabel, title) {
+  # Create a plot of the data 
+  plot <- plot(x=x_col, y=y_col, xlab=xlabel, ylab=ylabel, main=title)
+  
+  # Create a regression model
+  reg <- lm(y_col ~ x_col, data=data)
+  
+  # Visualize the plot and regression line
+  with(data, plot)
+  abline(reg)
+  
+  # Summarize the regression line
+  summary(reg)
+}
+```
+
+While this section will contain discussion of model diagnostics, discussion of the results is left for following sections.
+
+### 3.1. Model for Cohort 1
+```{r model_check1}
+check_assumptions(data_lte5, data_lte5$years_since_first_marriage, data_lte5$self_rated_mental_health_num)
+```
+
+The residuals vs fitted plot doesn't show a significant fitted pattern, so we confirm linearity.
+The scale-location plot shows a mostly horizontal line, so we confirm that residuals are spread along the range of predictors.
+The normal Q-Q plot approximately follows a straight line, so we confirm normality.
+We find some leverage points throughout this dataset, but this is due to the relatively limited set of individuals from the GSS who fit in cohort 1. Nevertheless, this is a necessary cohort as we do not have other data for verifying the existing academic consensus.
+
+We then perform linear regression and plot it below.
+
+```{r model_plot1}
+plot_data(data_lte5, data_lte5$years_since_first_marriage, data_lte5$self_rated_mental_health_num, xlabel="Years since Marriage", ylabel="Numeric Mental Health", title="Years since Marriage and Numerical Mental Wellbeing (Cohort 1)")
+```
+
+### 3.2. Model for Cohort 2
+```{r model_check2}
+check_assumptions(data_lte10, data_lte10$years_since_first_marriage, data_lte10$self_rated_mental_health_num)
+```
+
+The residuals vs fitted plot doesn't show a significant fitted pattern, so we confirm linearity.
+The scale-location plot shows a mostly horizontal line, so we confirm that residuals are spread along the range of predictors.
+The normal Q-Q plot approximately follows a straight line, so we confirm normality.
+We find limited leverage points in this dataset, so we confirm that there is not significant presence of influential values.
+
+We then perform linear regression and plot it below.
+
+```{r model_plot2}
+plot_data(data_lte10, data_lte10$years_since_first_marriage, data_lte10$self_rated_mental_health_num, xlabel="Years since Marriage", ylabel="Numeric Mental Health", title="Years since Marriage and Numerical Mental Wellbeing (Cohort 2)")
+```
+
+### 3.3. Model for Cohort 3
+```{r model_check3}
+check_assumptions(data, data$years_since_first_marriage, data$self_rated_mental_health_num)
+```
+
+The residuals vs fitted plot doesn't show a significant fitted pattern, so we confirm linearity.
+The scale-location plot shows a mostly horizontal line, so we confirm that residuals are spread along the range of predictors.
+The normal Q-Q plot approximately follows a straight line, so we confirm normality.
+We find limited leverage points in this dataset, so we confirm that there is not significant presence of influential values.
+
+We then perform linear regression and plot it below.
+
+
+```{r model_plot3}
+plot_data(data, data$years_since_first_marriage, data$self_rated_mental_health_num, xlabel="Years since Marriage", ylabel="Numeric Mental Health", title="Years since Marriage and Numerical Mental Wellbeing (Cohort 3)")
+```
+
+# Results
+
+Across the 3 cohorts, we find that the p-value for cohort 1 is less than 0.05, showing a statistically significant relationship between years since first marriage and mental health among people who first married 5 or less years ago. Overall, people within this cohort appear to have significantly better mental wellbeing over time during the first 5 years of marriage.
+
+We do not find a statistically significant relationship between years since first marriage and mental health among the general surveyed population or among people who were married 10 or less years ago.
+
+# Discussion
+
+Overall, these results are in line with prior research into marriage and mental wellbeing, which concluded that there appears to be an uptick in happiness during the earlier years of one's marriage but little effect on average later on in life.[7][8]
+
+Lucas et. al concluded that this is the outcome on average from a 15-year longitudial study over 24,000 individuals.[7] VanLamingham et. al conclude that there is no support for an upturn in  marital happiness in later years.[8] We also find that based on the GSS's family data, there is an improvement to short term happiness during the initial years following a first marriage but little to no impact in the long term.
+
+It is worth noting that the GSS for families is not comprehensive in that the surveyed population weights heavily towards older individuals. Thus, because the cohorts are overlapping (in order to also validate prior academic research), the regression for the cohorts which have been married for longer may underweigh the young population.
+
+In the context of McElreath's Small World and Large World discussed in chapter 2 of his textbook, we believe that the above model still somewhat resides in the small world in that the sample size for cohort 1 was relatively limited by the number of GSS-surveyed individuals who meet the cohort's requirements. However, as it uses substantial quantities of real data provided by an authoritative across other cohorts, we believe that it still holds some position in the large world.[9]
+
+
+# Weaknesses and next steps
+
+Future steps can be taken for this research. Firstly, the GSS for families is not comprehensive in that the surveyed population weights heavily towards older individuals. Thus, because the cohorts are overlapping (in order to also validate prior academic research), the regression for the cohorts which have been married for longer may underweigh the young population and thus show a weaker statistical relationship than an age-weighed dataset would. Furthermore, more precise cohorts can be constructed, such as a cohort which has never been divorced, but the GSS dataset does not provide enough samples in which the responder's current marriage is their only marriage. The overall survey responses available for self-assessed mental health also largely consist of more positive options without a cstated benchmark for what one would consider a "standard" state of mental health, so responders with poor mental health may also be underrepresented.
+
+
+# References
+
+As it has been stated that the style of references does not matter provided that it is consistent, I use the simplified referencing style shown below.
+
+[1] https://www.statcan.gc.ca/eng/survey/household/4501
+
+[2] https://www.statcan.gc.ca/eng/start
+
+[3] https://www23.statcan.gc.ca/imdb/p3Instr.pl?Function=assembleInstr&lang=en&Item_Id=335815
+
+[4] https://q.utoronto.ca/courses/184062
+
+[5] https://www150.statcan.gc.ca/n1/pub/91-209-x/2013001/article/11788-eng.htm
+
+[6] https://www150.statcan.gc.ca/n1/pub/11-630-x/11-630-x2014002-eng.htm
+
+[7] http://citeseerx.ist.psu.edu/viewdoc/summary?doi=10.1.1.119.9139
+
+[8] https://academic.oup.com/sf/article-abstract/79/4/1313/2234046?redirectedFrom=fulltext
+
+[9] https://xcelab.net/rm/statistical-rethinking/
